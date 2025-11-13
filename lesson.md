@@ -4,7 +4,7 @@
 
 ### Preparation
 
-Create the conda environment based on the `environment.yml` file.
+Create the conda environment based on the `ooc-environment.yml` file in the [environment folder](https://github.com/su-ntu-ctp/5m-data-2.1-intro-big-data-eng/tree/main/environments).
 
 ### Lesson Overview
 
