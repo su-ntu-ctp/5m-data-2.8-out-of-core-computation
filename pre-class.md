@@ -8,7 +8,7 @@ FreshCart's data science team asks you to process the full 3-year order history 
 
 ### Why this matters
 
-This is the bridge between single-machine processing (Module 1's pandas) and distributed processing (Unit 2.9's Spark). Not every problem needs a Spark cluster — many "big" datasets (1–50 GB) can be handled on a single machine with the right tools. Polars and DuckDB are increasingly the tools of choice for this "medium data" sweet spot, and they're dramatically faster than pandas even for datasets that *do* fit in memory. Understanding lazy evaluation here also prepares you conceptually for Spark.
+This is the bridge between single-machine processing (**Module 1**'s pandas) and distributed processing (**Lesson 2.9**'s Spark). Not every problem needs a Spark cluster — many "big" datasets (1–50 GB) can be handled on a single machine with the right tools. Polars and DuckDB are increasingly the tools of choice for this "medium data" sweet spot, and they're dramatically faster than pandas even for datasets that *do* fit in memory. Understanding lazy evaluation here also prepares you conceptually for Spark.
 
 ### Key concepts
 
