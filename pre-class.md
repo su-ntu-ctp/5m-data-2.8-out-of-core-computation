@@ -1,63 +1,24 @@
-# Self Studies
+# Pre-class brief
 
-**⏳ Estimated Prep Time:** 30–45 minutes
+![hero-pic](./assets/unit-2-8-out-of-core-computation.png)
 
-Welcome to our flipped-classroom session, where you'll review foundational concepts beforehand to maximize our time for hands-on coding and debugging. This pre-study focuses on mastering **Out-of-Core Computation** using libraries like **Polars** and **DuckDB**, ensuring you are ready to process datasets that are too large to fit into your machine's memory (RAM).
+### Where are we?
 
-## **⚡ Your Self-Study Tasks**
+FreshCart's data science team asks you to process the full 3-year order history — 50 million rows. You try loading it into pandas and your laptop kernel crashes. The data simply doesn't fit in RAM. You need tools that can process datasets larger than your machine's memory without requiring a distributed cluster.
 
-Please complete the following activities before our session.
+### Why this matters
 
-### **📝 Task 1: The "Why" of Out-of-Core Processing (10 Minutes)**
+This is the bridge between single-machine processing (Module 1's pandas) and distributed processing (Unit 2.9's Spark). Not every problem needs a Spark cluster — many "big" datasets (1–50 GB) can be handled on a single machine with the right tools. Polars and DuckDB are increasingly the tools of choice for this "medium data" sweet spot, and they're dramatically faster than pandas even for datasets that *do* fit in memory. Understanding lazy evaluation here also prepares you conceptually for Spark.
 
-**Activity:** Read the **"Lesson Overview"** and **"Part 1 \- Out-of-core Computation and Data Frames"** sections in the provided `lesson.md` file. Focus on understanding the limitations of traditional tools like Pandas and the architectural advantages of Polars.
+### Key concepts
 
-**Guiding Questions:**
+**Lazy Evaluation** — Instead of loading the entire dataset into memory and then processing it, lazy evaluation builds a *query plan* first and executes it only when you call `.collect()`. With `streaming=True`, Polars processes the data in chunks that fit in memory. This is the same concept Spark uses at distributed scale.
 
-* Why is Pandas considered limited when handling large datasets in a data science or engineering context?  
-* How does Polars leverage **Arrow arrays** and **multi-threading** to be more performant than Pandas?  
-* What is the concept of processing data in "chunks," and how does this help when data exceeds available memory?
+**Polars vs Pandas** — Polars leverages Apache Arrow's columnar memory format and multi-threaded execution. The hands-on timing comparisons make the performance difference concrete. For FreshCart, switching a daily report from pandas to Polars might reduce runtime from 20 minutes to 2 minutes — with zero infrastructure changes.
 
-### **📝 Task 2: Visualizing Lazy Evaluation and Polars (20 Minutes)**
+**DuckDB as an Embedded Analytical Database** — DuckDB lets you write SQL queries directly against CSV and Parquet files without loading them into a separate database. It's "SQLite for analytics." An analyst can query a 10 GB Parquet file on their laptop using familiar SQL, without needing access to BigQuery.
 
-**Activity:** Open and review the `out_of_core.ipynb` notebook. **You do not need to run the code yet.** Instead, read through the code cells and markdown comments to trace the difference between eager execution (Pandas) and lazy execution (Polars).
 
-**Focus your attention on these key components:**
-
-1. **Reading Data:** Compare `pd.read_csv` with `pl.read_csv` and `pl.scan_csv`.  
-2. **Lazy Evaluation:** Identify how the `.lazy()` method is used to define computation without immediately executing it.  
-3. **Collection:** Look at the `.collect()` method and the `streaming=True` parameter.
-
-**Guiding Questions:**
-
-* In the notebook, Polars recommends `lazy` evaluation. What happens to the code execution when using this method compared to standard execution?  
-* Look at the `scan_csv` function in the "Hands-on with Polars Out of Core Processing" section. How does this function differ from a standard read operation in terms of loading data into memory?
-
-### **📝 Task 3: Conceptualizing DuckDB (10 Minutes)**
-
-**Activity:** Briefly skim the **"Hands-on with DuckDB"** section at the end of `out_of_core.ipynb`.
-
-**Guiding Questions:**
-
-* How does DuckDB differ from a traditional Relational Database Management System (RDMS) regarding memory usage?  
-* Review the SQL query structure in the notebook. How does DuckDB allow you to query a CSV file directly (e.g., `read_csv_auto`) without pre-loading it into a database?
-
-## **🙌🏻 Active Engagement Strategies**
-
-To deepen your retention, try one of the following while you review:
-
-* **Concept Mapping:** Sketch a simple diagram showing the flow of data from *Disk (CSV)* \-\> *Chunks* \-\> *Processing (Polars/DuckDB)* \-\> *Result*, contrasting it with how Pandas loads everything into RAM at once.  
-* **"Code Commentary":** Select a code block using `.collect(streaming=True)` in the notebook and write a brief comment explaining why streaming is necessary for the NYC Taxi Trip dataset (1.5GB).  
-* **Scenario Matching:** Think of a recent project where your kernel crashed due to memory issues. How could `scan_csv` or DuckDB have prevented that error?
-
-## Additional Material
-
-- [Out of core data processing](https://pythonspeed.com/articles/data-doesnt-fit-in-memory/)
-- [Pandas Memory Error](https://saturncloud.io/blog/how-to-fix-memoryerror-issues-when-using-pandas-in-python/)
-- [Pandas Multiprocessing](https://saturncloud.io/blog/pandas-multiprocessing-apply-a-guide-for-data-scientists/)
-- [Pandas 2.0 vs Polars](https://www.datacamp.com/tutorial/high-performance-data-manipulation-in-python-pandas2-vs-polars)
-
-### **🙋🏻‍♂️ See you in the session\!**
 
 
 
