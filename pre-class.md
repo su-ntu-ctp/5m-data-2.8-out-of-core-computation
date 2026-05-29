@@ -19,6 +19,6 @@ This is the bridge between single-machine processing (**Module 1**'s pandas) and
 **DuckDB as an Embedded Analytical Database** — DuckDB lets you write SQL queries directly against CSV and Parquet files without loading them into a separate database. It's "SQLite for analytics." An analyst can query a 10 GB Parquet file on their laptop using familiar SQL, without needing access to BigQuery.
 
 
-
+**Watch [Out of Core Computation Intro Video](https://youtu.be/RSE6P7yh71M)**
 
 
