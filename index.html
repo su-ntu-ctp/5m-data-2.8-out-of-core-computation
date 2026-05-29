@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="slides-format" content="viewport">
+    <title>Out-of-Core Computation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style type="text/tailwindcss">
+        @theme {
+            --color-bg: #0a0a0f;
+            --color-bg-deep: #050508;
+            --color-surface: #13131a;
+            --color-text: #e2e8f0;
+            --color-text-secondary: #94a3b8;
+            --color-text-muted: #64748b;
+            --color-accent-1: #00FF41;
+            --color-accent-2: #00d4ff;
+            --color-accent-3: #FFA500;
+            --color-glass-bg: rgba(0,255,65,0.04);
+            --color-glass-border: rgba(0,255,65,0.12);
+            --color-vignette: rgba(0,0,0,0.5);
+            --font-display: 'JetBrains Mono', monospace;
+            --font-body: 'Inter', sans-serif;
+        }
+    </style>
+    <style>
+        :root { --color-bg: #0a0a0f; --color-text: #e2e8f0; --glow-color-rgb: 0,255,65; }
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { background: var(--color-bg); margin: 0; }
+        body { font-family: var(--font-body); color: var(--color-text); overflow: hidden; height: 100vh; width: 100vw; }
+        .deck { width: 100vw; height: 100vh; position: relative; }
+        .slide { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: var(--color-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; transform: scale(0.95); transition: opacity 0.7s ease, transform 0.7s ease; pointer-events: none; overflow: hidden; }
+        .slide.active { opacity: 1; transform: scale(1); pointer-events: all; }
+        .slide > .content { position: relative; z-index: 2; width: 100%; max-width: 1100px; padding: clamp(1.5rem, 4vw, 4rem); }
+        .nav-controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 16px; z-index: 100; background: var(--color-glass-bg); backdrop-filter: blur(10px); padding: 10px 24px; border-radius: 40px; border: 1px solid var(--color-glass-border); }
+        .nav-btn { width: 40px; height: 40px; border: none; background: var(--color-glass-bg); color: var(--color-accent-1); border-radius: 50%; font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.3s; }
+        .nav-btn:hover { background: var(--color-glass-border); }
+        .slide-dots { display: flex; gap: 8px; }
+        .slide-dots .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--color-glass-border); cursor: pointer; transition: background 0.3s, transform 0.3s; }
+        .slide-dots .dot.active { background: var(--color-accent-1); transform: scale(1.3); }
+        .slide-counter { font-size: 0.8rem; color: var(--color-text-muted); min-width: 40px; text-align: center; }
+        .reveal { opacity: 0; transform: translateY(20px); }
+        .text-glow { text-shadow: 0 0 20px rgba(0,255,65,0.5), 0 0 40px rgba(0,255,65,0.2); }
+        .stat-glow { text-shadow: 0 0 30px rgba(0,255,65,0.6), 0 0 60px rgba(0,255,65,0.25); }
+        @keyframes glow-pulse { 0%, 100% { text-shadow: 0 0 20px rgba(0,255,65,0.5), 0 0 40px rgba(0,255,65,0.2); } 50% { text-shadow: 0 0 30px rgba(0,255,65,0.8), 0 0 60px rgba(0,255,65,0.3); } }
+        .glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
+        @keyframes float-slow { 0% { transform: translate(0,0) scale(1); } 25% { transform: translate(60px,-50px) scale(1.12); } 50% { transform: translate(-40px,40px) scale(0.9); } 75% { transform: translate(50px,20px) scale(1.08); } 100% { transform: translate(0,0) scale(1); } }
+        @keyframes float-drift { 0% { transform: translate(0,0) scale(1) rotate(0deg); } 33% { transform: translate(-50px,-60px) scale(1.15) rotate(3deg); } 66% { transform: translate(40px,30px) scale(0.88) rotate(-2deg); } 100% { transform: translate(0,0) scale(1) rotate(0deg); } }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
+        @keyframes scanline { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+        .gradient-mesh { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+        .blob { position: absolute; border-radius: 50%; filter: blur(80px); animation: float-slow 10s ease-in-out infinite; }
+        .blob:nth-child(2) { animation: float-drift 14s ease-in-out infinite; }
+        .blob:nth-child(3) { animation: float-slow 18s ease-in-out infinite reverse; }
+        .slide::before { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"); background-repeat: repeat; background-size: 256px 256px; opacity: 0.03; mix-blend-mode: overlay; }
+        .slide::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse at center, transparent 50%, var(--color-vignette) 100%); }
+        .code-block { background: rgba(0,255,65,0.04); border: 1px solid rgba(0,255,65,0.15); border-radius: 8px; padding: 1rem 1.2rem; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; color: #00FF41; white-space: pre; overflow-x: auto; }
+        .scanline-overlay { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+        .scanline-line { position: absolute; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(0,255,65,0.03), transparent); animation: scanline 8s linear infinite; }
+    </style>
+</head>
+<body>
+<div class="mouse-spotlight" style="position:fixed;inset:0;z-index:99;pointer-events:none;"></div>
+<div class="deck">
+
+<!-- SLIDE 1: TITLE -->
+<div class="slide slide-1 active" data-slide="1">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:500px;height:500px;top:-100px;right:-100px;background:var(--color-accent-1);opacity:0.10;"></div>
+        <div class="blob" style="width:300px;height:300px;bottom:-80px;left:-60px;background:var(--color-accent-2);opacity:0.08;"></div>
+        <div class="blob" style="width:200px;height:200px;top:40%;left:15%;background:var(--color-accent-3);opacity:0.06;"></div>
+    </div>
+    <canvas class="particle-canvas" style="position:absolute;inset:0;z-index:1;"></canvas>
+    <div class="content text-center">
+        <div style="font-size:90px;margin-bottom:1.5rem;animation:float 3s ease-in-out infinite;" class="reveal">🐘</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--color-accent-1);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.8rem;" class="reveal">Lesson 2.8 · 5M-DATA · NTU</div>
+        <h1 style="font-family:'JetBrains Mono',monospace;font-size:clamp(2.2rem,5.5vw,4rem);font-weight:900;background:linear-gradient(135deg,#00FF41,#00d4ff,#00FF41);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:1rem;line-height:1.1;" class="reveal">Out-of-Core Computation</h1>
+        <p style="font-size:clamp(1rem,1.8vw,1.3rem);color:var(--color-text-secondary);letter-spacing:0.08em;font-weight:300;" class="reveal">Processing "Medium Data" without crashing your RAM</p>
+        <p style="font-size:0.9rem;color:var(--color-text-muted);margin-top:0.5rem;font-family:'JetBrains Mono',monospace;" class="reveal">Polars · DuckDB · Data Science &amp; Engineering</p>
+    </div>
+</div>
+
+<!-- SLIDE 2: THE MEMORY WALL -->
+<div class="slide slide-2" data-slide="2">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:400px;height:400px;top:-80px;right:-60px;background:#FF4444;opacity:0.08;"></div>
+        <div class="blob" style="width:250px;height:250px;bottom:-50px;left:-40px;background:var(--color-accent-1);opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--color-accent-1);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;" class="reveal">The Problem</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.8rem,4vw,2.8rem);font-weight:700;color:var(--color-text);margin-bottom:1.5rem;" class="reveal">🧱 The Memory Wall</h2>
+        <div style="background:rgba(255,68,68,0.06);border:1px solid rgba(255,68,68,0.2);border-radius:12px;padding:1.2rem 1.5rem;margin-bottom:1.5rem;" class="reveal">
+            <p style="font-size:1rem;color:#fca5a5;margin:0;">💥 You try loading 50 million rows (3-year FreshCart order history) into Pandas — <strong>your laptop kernel crashes.</strong></p>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;">
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid #FF4444;border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.4rem;">🐼</div>
+                <div style="font-size:0.8rem;color:var(--color-accent-3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">The Pandas Limit</div>
+                <p style="font-size:0.88rem;color:var(--color-text-secondary);margin-top:0.4rem;">Requires eager loading — brings <em>everything</em> into memory at once</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid #FF4444;border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.4rem;">💾</div>
+                <div style="font-size:0.8rem;color:var(--color-accent-3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">The Problem</div>
+                <p style="font-size:0.88rem;color:var(--color-text-secondary);margin-top:0.4rem;">Dataset simply does not fit in your machine's physical RAM</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid #FF4444;border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.4rem;">🚨</div>
+                <div style="font-size:0.8rem;color:var(--color-accent-3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">The Consequence</div>
+                <p style="font-size:0.88rem;color:var(--color-text-secondary);margin-top:0.4rem;">Out-Of-Memory (OOM) errors and kernel crashes</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 3: WHAT IS OUT-OF-CORE -->
+<div class="slide slide-3" data-slide="3">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:350px;height:350px;top:-70px;right:-80px;background:var(--color-accent-1);opacity:0.08;"></div>
+        <div class="blob" style="width:220px;height:220px;bottom:-50px;left:-30px;background:var(--color-accent-2);opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--color-accent-1);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;" class="reveal">The Solution</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.8rem,4vw,2.8rem);font-weight:700;color:var(--color-text);margin-bottom:1.5rem;" class="reveal">⚙️ What is Out-of-Core Processing?</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:center;">
+            <div>
+                <div style="background:rgba(0,255,65,0.06);border:1px solid rgba(0,255,65,0.2);border-radius:12px;padding:1.2rem;margin-bottom:1rem;" class="reveal">
+                    <span style="font-size:2.5rem;font-family:'JetBrains Mono',monospace;font-weight:900;color:var(--color-accent-1);" class="text-glow">1–50 GB</span>
+                    <p style="font-size:0.85rem;color:var(--color-text-secondary);margin:0.3rem 0 0;">The "Medium Data" Sweet Spot</p>
+                </div>
+                <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-radius:8px;padding:1rem;" class="reveal">
+                    <p style="font-size:0.9rem;color:var(--color-text-secondary);margin:0;">Data is read, processed, and <strong style="color:var(--color-accent-1);">discarded in smaller chunks</strong> or streams — no need to hold everything in RAM at once.</p>
+                </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:0.75rem;">
+                <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid var(--color-accent-1);border-radius:8px;padding:0.9rem;" class="reveal">
+                    <div style="font-size:0.78rem;color:var(--color-accent-3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">No Cluster Required</div>
+                    <p style="font-size:0.85rem;color:var(--color-text-secondary);margin:0.3rem 0 0;">Bridges single-machine Pandas and distributed Spark clusters</p>
+                </div>
+                <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid var(--color-accent-2);border-radius:8px;padding:0.9rem;" class="reveal">
+                    <div style="font-size:0.78rem;color:var(--color-accent-3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">Modern Tooling</div>
+                    <p style="font-size:0.85rem;color:var(--color-text-secondary);margin:0.3rem 0 0;">Polars and DuckDB are built precisely for this paradigm</p>
+                </div>
+                <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid var(--color-accent-3);border-radius:8px;padding:0.9rem;" class="reveal">
+                    <div style="font-size:0.78rem;color:var(--color-accent-3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">Single Machine</div>
+                    <p style="font-size:0.85rem;color:var(--color-text-secondary);margin:0.3rem 0 0;">Your laptop can analyze datasets larger than its available RAM</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 4: SECTION — POLARS -->
+<div class="slide slide-4" data-slide="4">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:500px;height:500px;top:-120px;right:-100px;background:var(--color-accent-1);opacity:0.12;"></div>
+        <div class="blob" style="width:300px;height:300px;bottom:-80px;left:-60px;background:var(--color-accent-2);opacity:0.08;"></div>
+        <div class="blob" style="width:150px;height:150px;top:30%;left:10%;background:var(--color-accent-3);opacity:0.07;"></div>
+    </div>
+    <canvas class="particle-canvas-ambient" style="position:absolute;inset:0;z-index:1;"></canvas>
+    <div class="content text-center">
+        <div style="font-size:80px;margin-bottom:1rem;animation:float 3s ease-in-out infinite;" class="reveal">🐻‍❄️</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(2rem,5vw,3.5rem);font-weight:900;background:linear-gradient(135deg,#00FF41,#00d4ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;" class="reveal">Lazy Evaluation &amp; Polars</h2>
+        <p style="font-size:1.1rem;color:var(--color-text-secondary);margin-top:0.8rem;letter-spacing:0.05em;" class="reveal">Understanding how query plans prevent memory crashes</p>
+    </div>
+</div>
+
+<!-- SLIDE 5: EAGER VS LAZY -->
+<div class="slide slide-5" data-slide="5">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:350px;height:350px;top:-70px;right:-60px;background:var(--color-accent-1);opacity:0.08;"></div>
+        <div class="blob" style="width:200px;height:200px;bottom:-40px;left:-30px;background:#FF6B35;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--color-accent-1);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;" class="reveal">Core Concept</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.6rem,3.5vw,2.4rem);font-weight:700;color:var(--color-text);margin-bottom:1.2rem;" class="reveal">⚡ Eager vs. Lazy Evaluation</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;">
+            <div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:12px;padding:1.2rem;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#FF4444;text-transform:uppercase;letter-spacing:0.12em;margin-bottom:0.7rem;">🐼 Eager Evaluation (Pandas)</div>
+                <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:0.5rem;">
+                    <li style="font-size:0.85rem;color:var(--color-text-secondary);">⚡ Evaluated immediately upon encounter</li>
+                    <li style="font-size:0.85rem;color:var(--color-text-secondary);">📥 Loads entire dataset into memory instantly</li>
+                    <li style="font-size:0.85rem;color:var(--color-text-secondary);">🔢 Executes operations step-by-step</li>
+                    <li style="font-size:0.85rem;color:#fca5a5;">💥 Prone to bottlenecks &amp; crashes with large files</li>
+                </ul>
+            </div>
+            <div style="background:rgba(0,255,65,0.05);border:1px solid rgba(0,255,65,0.2);border-radius:12px;padding:1.2rem;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--color-accent-1);text-transform:uppercase;letter-spacing:0.12em;margin-bottom:0.7rem;">🐻‍❄️ Lazy Evaluation (Polars)</div>
+                <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:0.5rem;">
+                    <li style="font-size:0.85rem;color:var(--color-text-secondary);">⏳ Execution deferred until results requested</li>
+                    <li style="font-size:0.85rem;color:var(--color-text-secondary);">🗺️ Builds a Query Plan first</li>
+                    <li style="font-size:0.85rem;color:var(--color-text-secondary);">🔧 Optimizes queries (predicate pushdown) before reading</li>
+                    <li style="font-size:0.85rem;color:#86efac;">✅ Execution forced only when calling <code style="font-family:'JetBrains Mono',monospace;color:var(--color-accent-1);">.collect()</code></li>
+                </ul>
+            </div>
+        </div>
+        <div class="code-block reveal" style="margin-top:1rem;">df = pl.scan_csv("huge_dataset.csv")  # Lazy — nothing loaded yet
+   .filter(pl.col("val") > 0)          # Query plan built
+   .collect(engine="streaming")         # Execution happens here</div>
+    </div>
+</div>
+
+<!-- SLIDE 6: POLARS STREAMING PERFORMANCE -->
+<div class="slide slide-6" data-slide="6">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:400px;height:400px;top:-80px;right:-80px;background:var(--color-accent-1);opacity:0.09;"></div>
+        <div class="blob" style="width:250px;height:250px;bottom:-50px;left:-40px;background:var(--color-accent-2);opacity:0.07;"></div>
+    </div>
+    <div class="content">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--color-accent-1);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;" class="reveal">Performance Impact</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.6rem,3.5vw,2.4rem);font-weight:700;color:var(--color-text);margin-bottom:1.2rem;" class="reveal">🚀 Polars Streaming: <code style="color:var(--color-accent-1);">streaming=True</code></h2>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.2rem;">
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-radius:10px;padding:1rem;text-align:center;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:2.2rem;font-weight:900;color:var(--color-accent-1);" class="stat-glow">10×</div>
+                <div style="font-size:0.78rem;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.1em;margin-top:0.3rem;">Speed Boost</div>
+                <p style="font-size:0.8rem;color:var(--color-text-secondary);margin-top:0.4rem;">20 min in Pandas → 2 min in Polars, zero infrastructure changes</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-radius:10px;padding:1rem;text-align:center;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:2.2rem;font-weight:900;color:var(--color-accent-2);" class="stat-glow">~200 MB</div>
+                <div style="font-size:0.78rem;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.1em;margin-top:0.3rem;">Peak Memory</div>
+                <p style="font-size:0.8rem;color:var(--color-text-secondary);margin-top:0.4rem;">Processing 1.5 GB NYC Taxi dataset in our hands-on exercise</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-radius:10px;padding:1rem;text-align:center;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:2.2rem;font-weight:900;color:var(--color-accent-3);" class="stat-glow">🦀 Rust</div>
+                <div style="font-size:0.78rem;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.1em;margin-top:0.3rem;">Engine</div>
+                <p style="font-size:0.8rem;color:var(--color-text-secondary);margin-top:0.4rem;">Apache Arrow columnar format · All CPU cores · Bypasses Python GIL</p>
+            </div>
+        </div>
+        <div style="background:rgba(0,255,65,0.04);border:1px solid rgba(0,255,65,0.12);border-radius:8px;padding:0.9rem;" class="reveal">
+            <p style="font-size:0.88rem;color:var(--color-text-secondary);margin:0;">By applying the <code style="font-family:'JetBrains Mono',monospace;color:var(--color-accent-1);">streaming engine</code> during lazy evaluation, Polars processes data in chunks that fit neatly into your memory — no cluster needed.</p>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 7: SECTION — DUCKDB -->
+<div class="slide slide-7" data-slide="7">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:500px;height:500px;top:-120px;left:-100px;background:var(--color-accent-2);opacity:0.12;"></div>
+        <div class="blob" style="width:300px;height:300px;bottom:-80px;right:-60px;background:var(--color-accent-1);opacity:0.08;"></div>
+        <div class="blob" style="width:150px;height:150px;top:20%;right:15%;background:var(--color-accent-3);opacity:0.07;"></div>
+    </div>
+    <canvas class="particle-canvas-ambient" style="position:absolute;inset:0;z-index:1;"></canvas>
+    <div class="content text-center">
+        <div style="font-size:80px;margin-bottom:1rem;animation:float 3s ease-in-out infinite;" class="reveal">🦆</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(2rem,5vw,3.5rem);font-weight:900;background:linear-gradient(135deg,#00d4ff,#00FF41);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;" class="reveal">Embedded Analytical Databases</h2>
+        <p style="font-size:1.1rem;color:var(--color-text-secondary);margin-top:0.8rem;letter-spacing:0.05em;" class="reveal">Using DuckDB to query large local files directly</p>
+    </div>
+</div>
+
+<!-- SLIDE 8: DUCKDB DETAILS -->
+<div class="slide slide-8" data-slide="8">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:350px;height:350px;top:-70px;left:-60px;background:var(--color-accent-2);opacity:0.09;"></div>
+        <div class="blob" style="width:220px;height:220px;bottom:-40px;right:-30px;background:var(--color-accent-1);opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--color-accent-2);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;" class="reveal">DuckDB</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.6rem,3.5vw,2.4rem);font-weight:700;color:var(--color-text);margin-bottom:1.2rem;" class="reveal">🦆 DuckDB: "SQLite for Analytics"</h2>
+        <p style="font-size:0.95rem;color:var(--color-text-secondary);margin-bottom:1.2rem;line-height:1.6;" class="reveal">DuckDB is an <strong style="color:var(--color-accent-2);">in-memory, embedded analytical database</strong>. It operates natively out-of-core on large datasets without requiring complex setups.</p>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;">
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid var(--color-accent-2);border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.4rem;">📄</div>
+                <div style="font-size:0.78rem;color:var(--color-accent-2);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">Direct Querying</div>
+                <p style="font-size:0.85rem;color:var(--color-text-secondary);margin-top:0.4rem;">Write SQL directly against raw <code style="color:var(--color-accent-1);">.csv</code> and <code style="color:var(--color-accent-1);">.parquet</code> files</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid var(--color-accent-1);border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.4rem;">🚀</div>
+                <div style="font-size:0.78rem;color:var(--color-accent-1);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">No DB Setup</div>
+                <p style="font-size:0.85rem;color:var(--color-text-secondary);margin-top:0.4rem;">No need to load data into a heavy database engine first</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:3px solid var(--color-accent-3);border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.4rem;">🔍</div>
+                <div style="font-size:0.78rem;color:var(--color-accent-3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">Familiar Syntax</div>
+                <p style="font-size:0.85rem;color:var(--color-text-secondary);margin-top:0.4rem;">Standard SQL on your local laptop — no new query language</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 9: DUCKDB USE CASES -->
+<div class="slide slide-9" data-slide="9">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:350px;height:350px;top:-70px;right:-60px;background:var(--color-accent-2);opacity:0.08;"></div>
+        <div class="blob" style="width:220px;height:220px;bottom:-40px;left:-30px;background:var(--color-accent-1);opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--color-accent-2);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;" class="reveal">Zero Infrastructure</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.6rem,3.5vw,2.4rem);font-weight:700;color:var(--color-text);margin-bottom:1.2rem;" class="reveal">🎯 The Purpose of an Embedded DB</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:1rem;">
+            <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.2);border-radius:12px;padding:1.2rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.5rem;">⚡</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--color-accent-2);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.5rem;">Zero Infrastructure</div>
+                <p style="font-size:0.9rem;color:var(--color-text-secondary);">Query a <strong style="color:var(--color-accent-2);">10 GB Parquet file on your laptop instantly</strong> — no BigQuery access, no cluster setup required</p>
+            </div>
+            <div style="background:rgba(0,255,65,0.05);border:1px solid rgba(0,255,65,0.2);border-radius:12px;padding:1.2rem;" class="reveal">
+                <div style="font-size:1.5rem;margin-bottom:0.5rem;">🐍</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--color-accent-1);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.5rem;">Python Ecosystem</div>
+                <p style="font-size:0.9rem;color:var(--color-text-secondary);">Execute high-speed analytical queries and return results as <strong style="color:var(--color-accent-1);">Polars or Pandas DataFrames</strong> for visualization</p>
+            </div>
+        </div>
+        <div class="code-block reveal">import duckdb
+
+result = duckdb.sql("SELECT * FROM 'large_file.parquet' WHERE revenue > 1000")
+df = result.pl()   # ← Returns as Polars DataFrame</div>
+    </div>
+</div>
+
+<!-- SLIDE 10: LESSON SUMMARY -->
+<div class="slide slide-10" data-slide="10">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:400px;height:400px;top:-80px;right:-80px;background:var(--color-accent-1);opacity:0.09;"></div>
+        <div class="blob" style="width:280px;height:280px;bottom:-60px;left:-50px;background:var(--color-accent-2);opacity:0.07;"></div>
+        <div class="blob" style="width:150px;height:150px;top:40%;left:10%;background:var(--color-accent-3);opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--color-accent-1);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.5rem;" class="reveal">Lesson 2.8 Summary</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.8rem,4vw,2.8rem);font-weight:700;color:var(--color-text);margin-bottom:1.2rem;" class="reveal">📋 Key Takeaways</h2>
+        <div style="display:flex;flex-direction:column;gap:0.9rem;">
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:4px solid var(--color-accent-1);border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--color-accent-1);text-transform:uppercase;letter-spacing:0.1em;">Out-of-Core Processing</div>
+                <p style="font-size:0.88rem;color:var(--color-text-secondary);margin:0.4rem 0 0;">Solves the "Medium Data" (1–50 GB) problem. Allows single machines to process data larger than RAM by operating in manageable chunks, avoiding OOM crashes.</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:4px solid var(--color-accent-2);border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--color-accent-2);text-transform:uppercase;letter-spacing:0.1em;">Lazy Evaluation (Polars)</div>
+                <p style="font-size:0.88rem;color:var(--color-text-secondary);margin:0.4rem 0 0;">Defers execution to build highly optimized query plans. Using <code style="color:var(--color-accent-1);">streaming=True</code> vastly reduces peak memory and speeds up execution.</p>
+            </div>
+            <div style="background:var(--color-glass-bg);border:1px solid var(--color-glass-border);border-left:4px solid var(--color-accent-3);border-radius:8px;padding:1rem;" class="reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--color-accent-3);text-transform:uppercase;letter-spacing:0.1em;">Embedded Databases (DuckDB)</div>
+                <p style="font-size:0.88rem;color:var(--color-text-secondary);margin:0.4rem 0 0;">"SQLite for Analytics." Allows direct, high-performance SQL querying against raw files with zero complex infrastructure or cloud requirements.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 11: CLOSING -->
+<div class="slide slide-11" data-slide="11">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:500px;height:500px;top:-100px;right:-100px;background:var(--color-accent-1);opacity:0.12;"></div>
+        <div class="blob" style="width:350px;height:350px;bottom:-80px;left:-60px;background:var(--color-accent-2);opacity:0.10;"></div>
+        <div class="blob" style="width:200px;height:200px;top:30%;left:20%;background:var(--color-accent-3);opacity:0.08;"></div>
+    </div>
+    <canvas class="particle-canvas" style="position:absolute;inset:0;z-index:1;"></canvas>
+    <div class="content text-center">
+        <div style="font-size:90px;margin-bottom:1.5rem;animation:float 3s ease-in-out infinite;" class="reveal">💻</div>
+        <h2 style="font-family:'JetBrains Mono',monospace;font-size:clamp(2rem,5vw,3.5rem);font-weight:900;background:linear-gradient(135deg,#00FF41,#00d4ff,#FFA500);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:1rem;" class="reveal">Ready for Hands-On?</h2>
+        <p style="font-size:1.1rem;color:var(--color-text-secondary);letter-spacing:0.05em;margin-bottom:0.5rem;" class="reveal">Notebook Exercises: Module 5M-DATA-2.8</p>
+        <p style="font-size:0.9rem;color:var(--color-text-muted);font-family:'JetBrains Mono',monospace;" class="reveal">Polars Streaming · DuckDB SQL · NYC Taxi Dataset</p>
+    </div>
+</div>
+
+</div>
+
+<div class="nav-controls">
+    <button class="nav-btn" onclick="changeSlide(-1)">&#8249;</button>
+    <div class="slide-dots" id="dots"></div>
+    <button class="nav-btn" onclick="changeSlide(1)">&#8250;</button>
+    <span class="slide-counter" id="counter">1 / 11</span>
+</div>
+
+<script>
+    let current = 1;
+    const total = document.querySelectorAll('.slide').length;
+    const dotsContainer = document.getElementById('dots');
+    const counter = document.getElementById('counter');
+    for (let i = 1; i <= total; i++) { const dot = document.createElement('div'); dot.className = 'dot' + (i === 1 ? ' active' : ''); dot.onclick = () => goToSlide(i); dotsContainer.appendChild(dot); }
+    function goToSlide(n) {
+        const prev = document.querySelector('.slide.active');
+        const next = document.querySelector(`.slide[data-slide="${n}"]`);
+        if (prev) prev.classList.remove('active');
+        if (next) { next.classList.add('active'); animateSlide(next); }
+        current = n; updateNav();
+    }
+    function changeSlide(dir) { let next = current + dir; if (next < 1) next = total; if (next > total) next = 1; goToSlide(next); }
+    function updateNav() { document.querySelectorAll('.dot').forEach((d, i) => { d.classList.toggle('active', i + 1 === current); }); counter.textContent = current + ' / ' + total; }
+    document.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); changeSlide(1); } if (e.key === 'ArrowLeft') { e.preventDefault(); changeSlide(-1); } });
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+    document.addEventListener('touchend', (e) => { const diff = touchStartX - e.changedTouches[0].clientX; if (Math.abs(diff) > 50) changeSlide(diff > 0 ? 1 : -1); });
+    function animateSlide(slide) {
+        slide.querySelectorAll('.reveal').forEach((el, i) => {
+            el.style.transition = 'none'; el.style.opacity = '0'; el.style.transform = 'translateY(20px)'; el.offsetHeight;
+            const delay = i * 0.08;
+            el.style.transition = `opacity 0.35s ease ${delay}s, transform 0.35s ease ${delay}s`;
+            el.style.opacity = '1'; el.style.transform = 'translateY(0px)';
+        });
+    }
+    document.addEventListener('mousemove', (e) => {
+        const spotlight = document.querySelector('.mouse-spotlight');
+        if (spotlight) spotlight.style.background = `radial-gradient(600px circle at ${e.clientX}px ${e.clientY}px, rgba(0,255,65,0.05), transparent 40%)`;
+    });
+    window.initParticles = function(canvas, options) {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d'); canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
+        const interactive = options.interactive !== false;
+        const count = options.count || (interactive ? 55 : 18);
+        let mx = -1000, my = -1000;
+        const particles = Array.from({ length: count }, () => ({ x: Math.random()*canvas.width, y: Math.random()*canvas.height, vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3, size: Math.random()*2.5+0.8, alpha: Math.random()*0.35+0.1 }));
+        if (interactive) { canvas.addEventListener('mousemove', (e) => { const rect = canvas.getBoundingClientRect(); mx = e.clientX-rect.left; my = e.clientY-rect.top; }); canvas.addEventListener('mouseleave', () => { mx = -1000; my = -1000; }); }
+        (function animate() {
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            particles.forEach(p => {
+                if (interactive) { const dx=p.x-mx, dy=p.y-my, dist=Math.sqrt(dx*dx+dy*dy); if (dist<120) { const force=(120-dist)/120*2; p.vx+=(dx/dist)*force*0.1; p.vy+=(dy/dist)*force*0.1; } }
+                p.vx*=0.98; p.vy*=0.98; p.x+=p.vx; p.y+=p.vy;
+                if (p.x<0) p.x=canvas.width; if (p.x>canvas.width) p.x=0; if (p.y<0) p.y=canvas.height; if (p.y>canvas.height) p.y=0;
+                ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fillStyle=`rgba(0,255,65,${p.alpha})`; ctx.fill();
+            });
+            requestAnimationFrame(animate);
+        })();
+    };
+    document.querySelectorAll('.particle-canvas').forEach(c => window.initParticles(c, { interactive: true, count: 55 }));
+    document.querySelectorAll('.particle-canvas-ambient').forEach(c => window.initParticles(c, { interactive: false, count: 18 }));
+    try { animateSlide(document.querySelector('.slide.active')); } catch(e) {}
+</script>
+</body>
+</html>
