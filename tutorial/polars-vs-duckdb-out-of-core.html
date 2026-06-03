@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Polars vs DuckDB — Out-of-Core Computation</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #121620;
+    --panel-2: #1a1f2c;
+    --line: #2a3142;
+    --ink: #e6e8ee;
+    --ink-dim: #8a93a6;
+    --polars: #f59e0b;
+    --polars-2: #fcd34d;
+    --duck: #22d3ee;
+    --duck-2: #67e8f9;
+    --ram: #34d399;
+    --disk: #f472b6;
+    --danger: #ef4444;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
+  a { color: var(--duck-2); }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 32px 24px 80px; }
+  header { padding: 8px 0 24px; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
+  .eyebrow { font-family: var(--mono); color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  h1 { font-size: 34px; margin: 6px 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 22px; margin: 36px 0 12px; letter-spacing: -0.01em; }
+  h3 { font-size: 16px; margin: 0 0 8px; }
+  .lede { color: var(--ink-dim); max-width: 760px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 880px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .panel.polars { border-top: 3px solid var(--polars); }
+  .panel.duck   { border-top: 3px solid var(--duck); }
+  .tag { display: inline-block; font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-dim); margin-right: 6px; }
+  .tag.polars { color: var(--polars); border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.07); }
+  .tag.duck   { color: var(--duck);   border-color: rgba(34,211,238,0.4); background: rgba(34,211,238,0.07); }
+
+  .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
+  @media (max-width: 880px) { .controls { grid-template-columns: 1fr 1fr; } }
+  .ctl { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .ctl label { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+  .ctl .val { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .ctl input[type=range] { width: 100%; }
+  .ctl select { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-family: var(--mono); font-size: 13px; }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  button { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-family: var(--sans); font-size: 14px; }
+  button:hover { border-color: var(--ink-dim); }
+  button.primary { background: linear-gradient(180deg, #2b3550, #1f2738); border-color: #3a4664; }
+
+  .viz { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .vizlabel { display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); margin-bottom: 8px; }
+  svg.chart { width: 100%; height: 220px; display: block; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+
+  .pipe { display: grid; grid-template-columns: 60px 1fr 60px; align-items: center; gap: 10px; margin-top: 8px; height: 80px; }
+  .pipe .src, .pipe .sink { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; height: 100%; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px; color: var(--ink-dim); text-align: center; padding: 0 4px; }
+  .pipe .track { background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; height: 100%; position: relative; overflow: hidden; }
+  .chunk { position: absolute; top: 50%; transform: translateY(-50%); height: 32px; width: 30px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 10px; color: #0b0d12; font-weight: 700; }
+
+  .buffer-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin-top: 8px; }
+  .page { aspect-ratio: 1 / 1; border-radius: 4px; background: #1c2333; border: 1px solid #2a3346; transition: background 0.4s, border-color 0.4s; }
+  .page.hot { background: var(--duck); border-color: var(--duck-2); }
+  .page.warm { background: rgba(34,211,238,0.35); border-color: rgba(34,211,238,0.45); }
+  .page.spilled { background: rgba(244,114,182,0.18); border-color: var(--disk); }
+
+  .verdict { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 12px; font-family: var(--mono); font-size: 13px; }
+  .verdict.ok { border-left: 3px solid var(--ram); }
+  .verdict.warn { border-left: 3px solid var(--polars); }
+  .verdict.bad { border-left: 3px solid var(--danger); }
+
+  pre { margin: 0; background: #0b0e15; border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; overflow-x: auto; color: #d1d6e1; }
+  pre .kw { color: #c084fc; }
+  pre .fn { color: #67e8f9; }
+  pre .str { color: #fcd34d; }
+  pre .cm { color: #6b7280; font-style: italic; }
+  pre .nm { color: #f472b6; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 14px; }
+  th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); }
+  td.col-polars { color: #fde68a; }
+  td.col-duck { color: #a5f3fc; }
+
+  .kbd { font-family: var(--mono); font-size: 12px; background: #1a1f2c; border: 1px solid var(--line); padding: 1px 6px; border-radius: 4px; color: var(--ink-dim); }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">DSAI · M3 · Out-of-core computation</div>
+  <h1>Polars <span style="color:var(--ink-dim);font-weight:400;">vs</span> DuckDB</h1>
+  <p class="lede">
+    Both can crunch datasets larger than RAM — but they get there differently.
+    <strong style="color:var(--polars)">Polars</strong> <em>streams</em> data through a pipeline in fixed-size morsels.
+    <strong style="color:var(--duck)">DuckDB</strong> uses a <em>buffer pool</em> that spills hot pages to a temp file when memory fills up.
+    Move the sliders below to see when each strategy wins.
+  </p>
+</header>
+
+<section>
+  <h2>1 · Interactive simulator</h2>
+  <p class="lede" style="margin-bottom:14px;">
+    Pretend you have a Parquet file and limited RAM. Pick an operation. Both engines try to finish without crashing.
+  </p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label>File size</label>
+      <div class="val"><span id="vFile">20</span> GB</div>
+      <input type="range" id="iFile" min="1" max="100" value="20" />
+    </div>
+    <div class="ctl">
+      <label>Available RAM</label>
+      <div class="val"><span id="vRam">8</span> GB</div>
+      <input type="range" id="iRam" min="1" max="64" value="8" />
+    </div>
+    <div class="ctl">
+      <label>Operation</label>
+      <select id="iOp">
+        <option value="filter">filter + project (streamable)</option>
+        <option value="groupby">group-by aggregate (streamable)</option>
+        <option value="sort">global sort (blocking)</option>
+        <option value="join">large × large hash join</option>
+        <option value="window">window function over full table</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label>Speed</label>
+      <select id="iSpeed">
+        <option value="1">1×</option>
+        <option value="2" selected>2×</option>
+        <option value="4">4×</option>
+      </select>
+      <div class="btnrow">
+        <button class="primary" id="btnRun">▶ Run</button>
+        <button id="btnReset">Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+
+    <div class="panel polars">
+      <h3><span class="tag polars">Polars</span> streaming engine</h3>
+      <div class="vizlabel"><span>Memory usage over time</span><span id="lblPolarsTime">0.0s</span></div>
+      <div class="viz">
+        <svg class="chart" id="chartPolars" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--polars)"></span>RAM used</span>
+          <span><span class="swatch" style="background:var(--ram)"></span>RAM limit</span>
+          <span><span class="swatch" style="background:var(--disk)"></span>Disk spill</span>
+        </div>
+      </div>
+      <div class="vizlabel" style="margin-top:14px;"><span>Pipeline (morsels flowing source → sink)</span><span id="lblPolarsChunks">0 / 0 morsels</span></div>
+      <div class="pipe" id="pipePolars">
+        <div class="src">Parquet<br/>scan</div>
+        <div class="track" id="polarsTrack"></div>
+        <div class="sink">Result</div>
+      </div>
+      <div class="verdict" id="vPolars">Idle.</div>
+    </div>
+
+    <div class="panel duck">
+      <h3><span class="tag duck">DuckDB</span> buffer pool + spill-to-disk</h3>
+      <div class="vizlabel"><span>Memory usage over time</span><span id="lblDuckTime">0.0s</span></div>
+      <div class="viz">
+        <svg class="chart" id="chartDuck" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--duck)"></span>RAM used</span>
+          <span><span class="swatch" style="background:var(--ram)"></span>RAM limit</span>
+          <span><span class="swatch" style="background:var(--disk)"></span>Disk spill</span>
+        </div>
+      </div>
+      <div class="vizlabel" style="margin-top:14px;"><span>Buffer pool (pages: <span style="color:var(--duck)">hot</span> / <span style="color:var(--disk)">spilled to temp file</span>)</span><span id="lblDuckPages">0 spilled</span></div>
+      <div class="buffer-grid" id="buf"></div>
+      <div class="verdict" id="vDuck">Idle.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2>2 · What just happened?</h2>
+  <div class="grid-2">
+    <div class="panel polars">
+      <h3><span class="tag polars">Polars</span> — streaming pipeline</h3>
+      <p>
+        With <code class="kbd">collect(engine="streaming")</code> (or the older <code class="kbd">streaming=True</code>),
+        Polars splits the query into operators that pass <strong>morsels</strong> (small Arrow batches, typically a few MB) through a pipeline.
+        Memory stays near-flat: only the morsels currently in flight plus any operator state (e.g. a hash table for group-by) live in RAM.
+      </p>
+      <ul>
+        <li><strong>Best at:</strong> filter, projection, group-by with bounded cardinality, streaming joins on a small side.</li>
+        <li><strong>Struggles when:</strong> the operator <em>must</em> see all data at once — global sort, large × large hash join, window over the full table.
+          These are <em>blocking</em> operators; the streaming engine may fall back to in-memory or fail.</li>
+        <li><strong>Mental model:</strong> a conveyor belt. If every station can act on one box at a time, the line never backs up.</li>
+      </ul>
+    </div>
+    <div class="panel duck">
+      <h3><span class="tag duck">DuckDB</span> — buffer pool spills to disk</h3>
+      <p>
+        DuckDB allocates a <strong>buffer pool</strong> (default ≈ 80% of RAM, configurable via <code class="kbd">SET memory_limit</code>).
+        Hash tables, sort runs, and join build sides live as <strong>pages</strong> in that pool.
+        When the pool is full, the buffer manager <strong>spills cold pages to a temp file</strong> (<code class="kbd">SET temp_directory</code>) and reads them back on demand.
+      </p>
+      <ul>
+        <li><strong>Best at:</strong> <em>any</em> SQL — including the hard cases. Out-of-core hash join, external merge sort, and window functions are all built in.</li>
+        <li><strong>Cost:</strong> when working set &gt; RAM, you pay disk I/O. Performance degrades gracefully instead of OOM-ing.</li>
+        <li><strong>Mental model:</strong> a library with a small reading room. Books you're using sit on the table; the rest live on shelves you walk to.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>3 · Same query, two engines</h2>
+  <p class="lede">A 50 GB Parquet file. Group by <code class="kbd">customer_id</code>, sum revenue, keep top 100.</p>
+
+  <div class="grid-2">
+    <div class="panel polars">
+      <h3><span class="tag polars">Polars</span> — lazy + streaming</h3>
+<pre><span class="kw">import</span> polars <span class="kw">as</span> pl
+
+q = (
+    pl.<span class="fn">scan_parquet</span>(<span class="str">"sales/*.parquet"</span>)        <span class="cm"># lazy, no read yet</span>
+      .<span class="fn">filter</span>(pl.col(<span class="str">"year"</span>) == <span class="nm">2025</span>)
+      .<span class="fn">group_by</span>(<span class="str">"customer_id"</span>)
+      .<span class="fn">agg</span>(pl.col(<span class="str">"revenue"</span>).<span class="fn">sum</span>())
+      .<span class="fn">sort</span>(<span class="str">"revenue"</span>, descending=<span class="kw">True</span>)
+      .<span class="fn">head</span>(<span class="nm">100</span>)
+)
+
+<span class="cm"># Streaming engine: morsel-by-morsel execution</span>
+top = q.<span class="fn">collect</span>(engine=<span class="str">"streaming"</span>)
+</pre>
+    </div>
+
+    <div class="panel duck">
+      <h3><span class="tag duck">DuckDB</span> — SQL on a file</h3>
+<pre><span class="kw">import</span> duckdb
+
+con = duckdb.<span class="fn">connect</span>()
+con.<span class="fn">execute</span>(<span class="str">"SET memory_limit = '8GB'"</span>)
+con.<span class="fn">execute</span>(<span class="str">"SET temp_directory = '/tmp/duck_spill'"</span>)
+
+top = con.<span class="fn">execute</span>(<span class="str">"""
+    SELECT customer_id, SUM(revenue) AS revenue
+    FROM 'sales/*.parquet'
+    WHERE year = 2025
+    GROUP BY customer_id
+    ORDER BY revenue DESC
+    LIMIT 100
+"""</span>).<span class="fn">df</span>()
+</pre>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>4 · Trade-offs at a glance</h2>
+  <div class="panel">
+    <table>
+      <thead>
+        <tr><th>Dimension</th><th>Polars</th><th>DuckDB</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>OOC mechanism</td>
+          <td class="col-polars">Streaming pipeline of morsels; near-flat memory</td>
+          <td class="col-duck">Buffer pool + automatic spill to temp files</td>
+        </tr>
+        <tr>
+          <td>API</td>
+          <td class="col-polars">DataFrame / lazy expression DSL (Python, Rust, JS)</td>
+          <td class="col-duck">SQL (plus Python/R/Java client APIs)</td>
+        </tr>
+        <tr>
+          <td>Blocking ops (sort, large join, window)</td>
+          <td class="col-polars">Limited — streaming engine handles some; may fall back to in-memory or error</td>
+          <td class="col-duck">Fully supported out-of-core (external sort, partitioned hash join)</td>
+        </tr>
+        <tr>
+          <td>Memory limit</td>
+          <td class="col-polars">Implicit; set process limits / control morsel size</td>
+          <td class="col-duck">Explicit: <code class="kbd">SET memory_limit = '8GB'</code></td>
+        </tr>
+        <tr>
+          <td>Spill location</td>
+          <td class="col-polars">No general spill — relies on pipelining</td>
+          <td class="col-duck">Configurable temp dir; spills hash tables &amp; sort runs</td>
+        </tr>
+        <tr>
+          <td>Parquet / CSV scan</td>
+          <td class="col-polars">Predicate &amp; projection pushdown, partition pruning</td>
+          <td class="col-duck">Same — both query files directly, no full load</td>
+        </tr>
+        <tr>
+          <td>Sweet spot</td>
+          <td class="col-polars">ETL, feature engineering, DataFrame workflows in Python</td>
+          <td class="col-duck">Ad-hoc SQL analytics on data &gt; RAM; complex joins; embedded in apps</td>
+        </tr>
+        <tr>
+          <td>When it hurts</td>
+          <td class="col-polars">Heavy joins or sorts on data ≫ RAM</td>
+          <td class="col-duck">Disk-bound when working set far exceeds RAM (still works, but I/O slow)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>5 · Rule of thumb</h2>
+  <div class="grid-3">
+    <div class="panel">
+      <h3>Use <span class="tag polars">Polars</span> when…</h3>
+      <ul style="margin:0;padding-left:18px;">
+        <li>You're in a Python ML / ETL pipeline.</li>
+        <li>Your query is mostly filter / project / group-by.</li>
+        <li>You want a DataFrame, not a connection.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Use <span class="tag duck">DuckDB</span> when…</h3>
+      <ul style="margin:0;padding-left:18px;">
+        <li>You think in SQL.</li>
+        <li>You need joins / sorts / windows on huge data.</li>
+        <li>You want graceful degradation, not OOM.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Use <span class="tag polars">both</span></h3>
+      <ul style="margin:0;padding-left:18px;">
+        <li>They share Apache Arrow under the hood.</li>
+        <li>Hand a <code class="kbd">pl.DataFrame</code> to DuckDB with zero copy: <code class="kbd">duckdb.sql("FROM df")</code>.</li>
+        <li>Pick the engine per step of the pipeline.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Single-file demo · simulator values are illustrative (real timings depend on disk, CPU, schema).
+  Polars streaming engine: docs.pola.rs/streaming · DuckDB buffer manager: duckdb.org/docs/configuration
+</footer>
+
+</div>
+
+<script>
+const iFile = document.getElementById('iFile');
+const iRam  = document.getElementById('iRam');
+const iOp   = document.getElementById('iOp');
+const iSpeed = document.getElementById('iSpeed');
+const vFile = document.getElementById('vFile');
+const vRam  = document.getElementById('vRam');
+const btnRun = document.getElementById('btnRun');
+const btnReset = document.getElementById('btnReset');
+
+const chartPolars = document.getElementById('chartPolars');
+const chartDuck   = document.getElementById('chartDuck');
+const polarsTrack = document.getElementById('polarsTrack');
+const buf = document.getElementById('buf');
+const vPolars = document.getElementById('vPolars');
+const vDuck   = document.getElementById('vDuck');
+const lblPolarsTime = document.getElementById('lblPolarsTime');
+const lblDuckTime   = document.getElementById('lblDuckTime');
+const lblPolarsChunks = document.getElementById('lblPolarsChunks');
+const lblDuckPages    = document.getElementById('lblDuckPages');
+
+const N_PAGES = 60;
+const pages = [];
+for (let i = 0; i < N_PAGES; i++) {
+  const p = document.createElement('div');
+  p.className = 'page';
+  buf.appendChild(p);
+  pages.push(p);
+}
+
+iFile.addEventListener('input', () => vFile.textContent = iFile.value);
+iRam.addEventListener('input',  () => vRam.textContent  = iRam.value);
+btnReset.addEventListener('click', resetAll);
+btnRun.addEventListener('click', run);
+
+function resetAll() {
+  chartPolars.innerHTML = '';
+  chartDuck.innerHTML = '';
+  polarsTrack.innerHTML = '';
+  pages.forEach(p => p.className = 'page');
+  vPolars.className = 'verdict'; vPolars.textContent = 'Idle.';
+  vDuck.className = 'verdict';   vDuck.textContent = 'Idle.';
+  lblPolarsTime.textContent = '0.0s';
+  lblDuckTime.textContent = '0.0s';
+  lblPolarsChunks.textContent = '0 / 0 morsels';
+  lblDuckPages.textContent = '0 spilled';
+}
+
+const OPS = {
+  filter:   { label: 'filter+project',   cost: 1.0, polarsBlocking: false, duckHeavy: false },
+  groupby:  { label: 'group-by',         cost: 1.3, polarsBlocking: false, duckHeavy: false },
+  sort:     { label: 'global sort',      cost: 2.4, polarsBlocking: true,  duckHeavy: true  },
+  join:     { label: 'large×large join', cost: 2.8, polarsBlocking: true,  duckHeavy: true  },
+  window:   { label: 'window function',  cost: 2.2, polarsBlocking: true,  duckHeavy: true  },
+};
+
+let running = false;
+let token = 0;
+
+async function run() {
+  if (running) return;
+  running = true;
+  resetAll();
+  const t0 = performance.now();
+  const myToken = ++token;
+
+  const fileGB = +iFile.value;
+  const ramGB  = +iRam.value;
+  const op     = iOp.value;
+  const speed  = +iSpeed.value;
+  const cfg    = OPS[op];
+
+  const STEPS = Math.max(60, Math.round(80 * cfg.cost * Math.log2(2 + fileGB / 4)));
+  const dt    = Math.max(8, 60 / speed);
+
+  const morsels = Math.max(8, Math.min(40, Math.round(fileGB * 1.2)));
+  const morselSeries = [];
+  for (let i = 0; i < morsels; i++) morselSeries.push(spawnMorsel(i));
+
+  const polarsSeries = [];
+  const duckSeries   = [];
+
+  let polarsFailed = false;
+  let duckSpillGB = 0;
+  let spilledPages = 0;
+
+  for (let s = 0; s <= STEPS; s++) {
+    if (myToken !== token) { running = false; return; }
+    const p = s / STEPS;
+
+    let pMem;
+    if (!cfg.polarsBlocking) {
+      const base = Math.min(ramGB * 0.15, 1.5);
+      pMem = base + Math.sin(p * Math.PI * 8) * base * 0.25;
+    } else {
+      pMem = fileGB * p;
+      if (pMem > ramGB && !polarsFailed) polarsFailed = true;
+    }
+
+    const ceiling = ramGB * 0.9;
+    const target  = cfg.duckHeavy ? fileGB * 0.6 : fileGB * 0.25;
+    const wantMem = target * Math.min(1, p * 1.4);
+    let dMem, dSpill;
+    if (wantMem <= ceiling) { dMem = wantMem; dSpill = 0; }
+    else { dMem = ceiling; dSpill = wantMem - ceiling; }
+    duckSpillGB = dSpill;
+
+    polarsSeries.push(pMem);
+    duckSeries.push({ mem: dMem, spill: dSpill });
+
+    drawChart(chartPolars, polarsSeries.map(v => ({ mem: v, spill: 0 })), ramGB, fileGB, 'polars', polarsFailed);
+    drawChart(chartDuck,   duckSeries, ramGB, fileGB, 'duck', false);
+
+    const filled = Math.round((dMem / ramGB) * N_PAGES);
+    spilledPages = Math.round((dSpill / Math.max(0.01, fileGB)) * N_PAGES);
+    for (let i = 0; i < N_PAGES; i++) {
+      const pg = pages[i];
+      if (i < filled - 6) pg.className = 'page warm';
+      else if (i < filled) pg.className = 'page hot';
+      else if (i < filled + spilledPages) pg.className = 'page spilled';
+      else pg.className = 'page';
+    }
+    lblDuckPages.textContent = `${spilledPages} pages spilled${dSpill > 0 ? ` (~${dSpill.toFixed(1)} GB on disk)` : ''}`;
+
+    const morselsDone = Math.min(morsels, Math.floor(p * morsels * 1.05));
+    morselSeries.forEach((m, i) => {
+      if (polarsFailed) { m.el.style.opacity = '0.15'; return; }
+      const indiv = (p * 1.05) - (i / morsels);
+      if (indiv < 0) { m.el.style.left = '0%'; m.el.style.opacity = '0'; return; }
+      m.el.style.opacity = '1';
+      const x = Math.min(1, indiv * 1.6);
+      m.el.style.left = `calc(${(x * 100).toFixed(1)}% - 15px)`;
+      if (x >= 1) m.el.style.opacity = '0.15';
+    });
+    lblPolarsChunks.textContent = `${morselsDone} / ${morsels} morsels`;
+
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    lblPolarsTime.textContent = elapsed + 's';
+    lblDuckTime.textContent   = elapsed + 's';
+
+    await sleep(dt);
+  }
+
+  if (polarsFailed) {
+    vPolars.className = 'verdict bad';
+    vPolars.textContent = `✗ Streaming engine cannot complete a ${cfg.label} on ${fileGB} GB with ${ramGB} GB RAM — this is a blocking operator that needs to see the whole table. Polars falls back to in-memory and OOMs.`;
+  } else if (cfg.polarsBlocking) {
+    vPolars.className = 'verdict warn';
+    vPolars.textContent = `⚠ ${cfg.label} is a blocking op for the streaming engine. It fit this time (file ≤ RAM), but it's not really streaming — memory tracks file size.`;
+  } else {
+    vPolars.className = 'verdict ok';
+    vPolars.textContent = `✓ Streamed cleanly. Memory stayed near-flat (~${(ramGB*0.15).toFixed(1)} GB) regardless of the ${fileGB} GB input. Pipelined ${morsels} morsels through filter → aggregate → sink.`;
+  }
+
+  if (duckSpillGB > 0) {
+    vDuck.className = 'verdict warn';
+    vDuck.textContent = `✓ Finished — but spilled ~${duckSpillGB.toFixed(1)} GB to the temp directory. Disk I/O dominates wall time when working set exceeds the buffer pool.`;
+  } else {
+    vDuck.className = 'verdict ok';
+    vDuck.textContent = `✓ Finished entirely in the buffer pool. No spill needed: working set (~${(duckSeries.at(-1).mem).toFixed(1)} GB) fit under the ${(ramGB*0.9).toFixed(1)} GB limit.`;
+  }
+
+  running = false;
+}
+
+function spawnMorsel(i) {
+  const el = document.createElement('div');
+  el.className = 'chunk';
+  el.style.background = `hsl(${30 + (i % 6) * 8}, 85%, ${55 + (i%3)*5}%)`;
+  el.style.left = '0%';
+  el.style.opacity = '0';
+  el.style.transition = 'left 0.18s linear, opacity 0.2s';
+  el.textContent = (i+1);
+  polarsTrack.appendChild(el);
+  return { el, i };
+}
+
+function drawChart(svg, series, ramGB, fileGB, kind, failed) {
+  const W = 600, H = 220;
+  const yMax = Math.max(ramGB * 1.25, fileGB * 1.05, 1);
+  const n = series.length;
+  if (n < 2) { svg.innerHTML = ''; return; }
+  const xOf = i => (i / (n - 1)) * (W - 40) + 30;
+  const yOf = v => H - 20 - (v / yMax) * (H - 40);
+
+  const memPts = series.map((s, i) => `${xOf(i).toFixed(1)},${yOf(s.mem).toFixed(1)}`).join(' ');
+  const spillPts = series.map((s, i) => `${xOf(i).toFixed(1)},${yOf(s.spill).toFixed(1)}`).join(' ');
+
+  const ramY = yOf(ramGB);
+  const color = kind === 'polars' ? '#f59e0b' : '#22d3ee';
+  const memArea = `${xOf(0).toFixed(1)},${H-20} ${memPts} ${xOf(n-1).toFixed(1)},${H-20}`;
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="grad-${kind}" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.45"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+      </linearGradient>
+    </defs>
+    <line x1="30" x2="${W-10}" y1="${H-20}" y2="${H-20}" stroke="#2a3142"/>
+    <line x1="30" x2="30" y1="10" y2="${H-20}" stroke="#2a3142"/>
+    <line x1="30" x2="${W-10}" y1="${ramY}" y2="${ramY}" stroke="#34d399" stroke-dasharray="4 4" stroke-width="1.2"/>
+    <text x="${W-12}" y="${ramY-4}" text-anchor="end" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#34d399">RAM limit ${ramGB} GB</text>
+    <polygon points="${memArea}" fill="url(#grad-${kind})"/>
+    <polyline points="${memPts}" fill="none" stroke="${color}" stroke-width="2"/>
+    <polyline points="${spillPts}" fill="none" stroke="#f472b6" stroke-width="1.6" stroke-dasharray="3 3"/>
+    <text x="6" y="14" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#8a93a6">GB</text>
+    <text x="6" y="${H-22}" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#8a93a6">0</text>
+    ${failed ? `
+      <rect x="30" y="10" width="${W-40}" height="${H-30}" fill="rgba(239,68,68,0.07)"/>
+      <text x="${W/2}" y="${H/2}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="14" fill="#ef4444" font-weight="700">OOM — exceeded RAM limit</text>
+    ` : ''}
+  `;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+window.addEventListener('load', () => setTimeout(run, 300));
+</script>
+
+</body>
+</html>
