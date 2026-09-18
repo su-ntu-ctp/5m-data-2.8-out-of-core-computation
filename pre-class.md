@@ -21,4 +21,4 @@ This is the bridge between single-machine processing (**Module 1**'s pandas) and
 
 **Watch [Out of Core Computation Intro Video](https://youtu.be/RSE6P7yh71M)**
 
-
+📄 [View lesson 2.8 interactive page](https://su-ntu-ctp.github.io/5m-data-2.8-out-of-core-computation/)
